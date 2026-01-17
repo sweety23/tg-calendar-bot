@@ -1,0 +1,2 @@
+requests==2.32.3
+dateparser==1.2.0
