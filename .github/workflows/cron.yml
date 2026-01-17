@@ -1,0 +1,24 @@
+name: tg-calendar-cron
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python runner.py
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_SOURCE_CHAT_ID: ${{ secrets.TG_SOURCE_CHAT_ID }}
+          TG_TARGET_CHAT_ID: ${{ secrets.TG_TARGET_CHAT_ID }}
+          TG_CALENDAR_CHAT_ID: ${{ secrets.TG_CALENDAR_CHAT_ID }}
+          TZ: ${{ secrets.TZ }}
+          TG_ALLOWED_THREAD_ID: ${{ secrets.TG_ALLOWED_THREAD_ID }}
