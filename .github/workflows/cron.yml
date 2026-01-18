@@ -1,6 +1,35 @@
 name: tg-reminder-bot
 
 on:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Run python runner.py
+        shell: bash
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TZ: ${{ secrets.TZ }}
+        run: |
+          echo "ENV_KEYS:"
+          env | sort | sed -n '1,60p'
+          python -u runner.py
+
+
+
+name: tg-reminder-bot
+
+on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
