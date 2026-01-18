@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+
+import os
+t = (os.getenv("TG_BOT_TOKEN") or "").strip()
+print("HAS_TOKEN=", bool(t))
+print("TOKEN_LEN=", len(t))
+
+
+
 import os, re, json, hashlib
 from datetime import datetime, timedelta, time as dtime
 from zoneinfo import ZoneInfo
