@@ -1,4 +1,4 @@
-name: tg-calendar-cron
+name: tg-reminder-bot
 
 on:
   schedule:
@@ -17,8 +17,19 @@ jobs:
       - run: python runner.py
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_SOURCE_CHAT_ID: ${{ secrets.TG_SOURCE_CHAT_ID }}
-          TG_TARGET_CHAT_ID: ${{ secrets.TG_TARGET_CHAT_ID }}
-          TG_CALENDAR_CHAT_ID: ${{ secrets.TG_CALENDAR_CHAT_ID }}
           TZ: ${{ secrets.TZ }}
-          TG_ALLOWED_THREAD_ID: ${{ secrets.TG_ALLOWED_THREAD_ID }}
+
+          # источник (группа + тема)
+          SOURCE_CHAT_ID: ${{ secrets.SOURCE_CHAT_ID }}
+          SOURCE_THREAD_ID: ${{ secrets.SOURCE_THREAD_ID }}
+
+          # хранилище состояния
+          STATE_CHAT_ID: ${{ secrets.STATE_CHAT_ID }}
+          STATE_THREAD_ID: ${{ secrets.STATE_THREAD_ID }}
+
+          # два получателя (только эти двое)
+          USER1_CHAT_ID: ${{ secrets.USER1_CHAT_ID }}
+          USER2_CHAT_ID: ${{ secrets.USER2_CHAT_ID }}
+
+          # заголовки в тексте, которые переключают "список 1/2" (лежит только в Secrets)
+          PEOPLE_MARKERS_JSON: ${{ secrets.PEOPLE_MARKERS_JSON }}
