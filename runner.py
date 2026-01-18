@@ -329,6 +329,8 @@ def save_state(state_mid: int, state: dict):
     })
 
 def main():
+    tg("deleteWebhook", {"drop_pending_updates": True})
+
     markers = load_markers()
     allowed_private = get_allowed_ids()
 
