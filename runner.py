@@ -19,6 +19,11 @@ USER2_CHAT_ID = (os.getenv("USER2_CHAT_ID") or "").strip()
 
 PEOPLE_MARKERS_JSON = (os.getenv("PEOPLE_MARKERS_JSON") or "").strip()
 
+MIRROR_CHAT_ID = (os.getenv("MIRROR_CHAT_ID") or "").strip()
+MIRROR_THREAD_ID = (os.getenv("MIRROR_THREAD_ID") or "").strip()
+
+DEBUG = (os.getenv("DEBUG") or "").strip() == "1"
+
 if not BOT_TOKEN:
     raise SystemExit("TG_BOT_TOKEN is required")
 
@@ -37,11 +42,16 @@ DEFAULT_CFG = {
     "daily_digest_time": "08:05",
 }
 
+def log(*a):
+    if DEBUG:
+        print(*a)
+
 def tg(method, payload=None, timeout=30):
     payload = payload or {}
     r = requests.post(f"{API}/{method}", json=payload, timeout=timeout)
     data = r.json()
     if not data.get("ok"):
+        print("TG_ERROR", method, data)
         return None, data
     return data["result"], data
 
@@ -92,20 +102,21 @@ def detect_time(s: str):
     return bool(re.search(r"\b([01]?\d|2[0-3])[:][0-5]\d\b", s))
 
 def normalize_time_in_line(line: str) -> str:
+    # "в 8.10" / "в 8,10" -> "в 8:10"
     line = re.sub(r"\bв\s*([01]?\d|2[0-3])[.,]([0-5]\d)\b", r"в \1:\2", line, flags=re.I)
+    # "23 января 9,40" -> "23 января 9:40"
     months = r"(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)"
     line = re.sub(
         rf"(\b\d{{1,2}}\s+{months}\w*\b.*?)(\b([01]?\d|2[0-3])[.,]([0-5]\d)\b)",
         lambda m: m.group(1) + m.group(3) + ":" + m.group(4),
         line, flags=re.I
     )
+    # "09.03.26 8.10" -> "09.03.26 8:10"
     line = re.sub(r"(\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b)\s+([01]?\d|2[0-3])[.,]([0-5]\d)\b", r"\1 \2:\3", line)
     return line
 
 def load_markers():
-    if not PEOPLE_MARKERS_JSON:
-        return {"1": [], "2": []}
-    obj = safe_json(PEOPLE_MARKERS_JSON)
+    obj = safe_json(PEOPLE_MARKERS_JSON) if PEOPLE_MARKERS_JSON else None
     if not isinstance(obj, dict):
         return {"1": [], "2": []}
     out = {"1": [], "2": []}
@@ -128,13 +139,11 @@ def is_category_line(line: str) -> bool:
     return True
 
 def parse_events_from_block(text: str, markers: dict):
-    if not text:
-        return []
-    if text.strip().startswith("/"):
+    if not text or text.strip().startswith("/"):
         return []
 
     slot = "1"
-    category = None
+    category = ""
     events = []
 
     lines = [x.strip() for x in text.splitlines() if x.strip()]
@@ -145,14 +154,14 @@ def parse_events_from_block(text: str, markers: dict):
         line = raw.strip()
 
         if line in ("-", "—"):
-            category = None
+            category = ""
             continue
 
         lf = line.casefold()
         if lf in m1:
-            slot = "1"; category = None; continue
+            slot = "1"; category = ""; continue
         if lf in m2:
-            slot = "2"; category = None; continue
+            slot = "2"; category = ""; continue
 
         if line.isupper() and len(line) <= 30:
             continue
@@ -166,9 +175,15 @@ def parse_events_from_block(text: str, markers: dict):
             if not has_time:
                 dt = dt.replace(hour=9, minute=0, second=0, microsecond=0)
 
-            title = f"{category}: {line}" if category else line
-            eid = sha1(f"{slot}|{dt.isoformat()}|{title}")
-            events.append({"id": eid, "slot": slot, "dt_iso": dt.isoformat(), "has_time": has_time, "title": title})
+            eid = sha1(f"{slot}|{dt.isoformat()}|{category}|{line}")
+            events.append({
+                "id": eid,
+                "slot": slot,
+                "dt_iso": dt.isoformat(),
+                "has_time": has_time,
+                "category": category,
+                "raw": line
+            })
             continue
 
         if is_category_line(line):
@@ -182,7 +197,7 @@ def send(chat_id: int, text: str, silent: bool = True, reply_markup=None, thread
     if reply_markup is not None:
         payload["reply_markup"] = reply_markup
     if thread_id is not None:
-        payload["message_thread_id"] = int(thread_id)
+        payload["message_thread_id"] = thread_id
     return tg("sendMessage", payload)[0]
 
 def answer_callback(cq_id: str, text: str):
@@ -214,29 +229,6 @@ def due_daily_digest(cfg: dict, n: datetime):
     target = datetime.combine(n.date(), dtime(h, m), TZ)
     return due_at(target, n)
 
-def format_event(ev: dict):
-    dt = datetime.fromisoformat(ev["dt_iso"]).astimezone(TZ)
-    ds = dt.strftime("%d.%m.%Y %H:%M") if ev.get("has_time") else dt.strftime("%d.%m.%Y")
-    return f"• {ds} — {ev.get('title','')}".strip()
-
-def build_all_events_text(state: dict):
-    evs = list(state["events"].values())
-    evs.sort(key=lambda x: x["dt_iso"])
-    if not evs:
-        return "Будущих событий нет."
-
-    out = ["Все будущие запланированные события:", ""]
-    for slot in ("1", "2"):
-        items = [e for e in evs if e["slot"] == slot]
-        out.append(f"Список {slot}:")
-        if not items:
-            out.append("• (нет)")
-        else:
-            for e in items:
-                out.append(format_event(e))
-        out.append("")
-    return "\n".join(out)[:MAXLEN]
-
 def get_allowed_ids():
     a = []
     if USER1_CHAT_ID.isdigit(): a.append(int(USER1_CHAT_ID))
@@ -247,7 +239,7 @@ def ensure_state():
     if not STATE_CHAT_ID:
         return None, None
 
-    chat, _ = tg("getChat", {"chat_id": int(STATE_CHAT_ID)})
+    chat, _ = tg("getChat", {"chat_id": STATE_CHAT_ID})
     pinned = (chat or {}).get("pinned_message")
     if pinned:
         st = extract_state(pinned.get("text", ""))
@@ -259,19 +251,17 @@ def ensure_state():
         "tz": TZ_NAME,
         "cfg": DEFAULT_CFG,
         "last_update_id": 0,
-        "events": {},
-        "by_msg": {},
-        "sent": {},
-        "notes": "",
-        "mirror_msg_id": 0
+        "events": {},     # id -> event
+        "by_msg": {},     # source_msg_id -> [event_ids]
+        "sent": {},       # reminder keys
+        "mirror_mid": 0   # message_id зеркального поста
     }
 
-    msg, _ = tg("sendMessage", {
-        "chat_id": int(STATE_CHAT_ID),
-        "text": build_state_text(base),
-        "disable_notification": True,
-        **({"message_thread_id": int(STATE_THREAD_ID)} if STATE_THREAD_ID.isdigit() else {})
-    })
+    payload = {"chat_id": int(STATE_CHAT_ID), "text": build_state_text(base), "disable_notification": True}
+    if STATE_THREAD_ID.isdigit():
+        payload["message_thread_id"] = int(STATE_THREAD_ID)
+
+    msg, _ = tg("sendMessage", payload)
     if not msg:
         raise SystemExit("Cannot create STATE message")
 
@@ -282,40 +272,70 @@ def ensure_state():
 def save_state(state_mid: int, state: dict):
     tg("editMessageText", {
         "chat_id": int(STATE_CHAT_ID),
-        "message_id": int(state_mid),
+        "message_id": state_mid,
         "text": build_state_text(state)
     })
 
-def upsert_mirror_post(state: dict):
-    """
-    В теме "Термины" бот ведёт ОДНО своё сообщение и редактирует ТОЛЬКО его.
-    """
-    if not (SOURCE_CHAT_ID and SOURCE_THREAD_ID):
+def render_terms_text(state: dict, markers: dict) -> str:
+    evs = list(state["events"].values())
+    evs.sort(key=lambda x: x["dt_iso"])
+
+    # заголовки берём из secrets (первый маркер)
+    h1 = (markers.get("1") or ["Список 1"])[0]
+    h2 = (markers.get("2") or ["Список 2"])[0]
+
+    out = ["ТЕРМИНЫ", "", h1]
+    def block(slot: str, header: str):
+        items = [e for e in evs if e["slot"] == slot]
+        if not items:
+            return [header, "(нет)"]
+        lines = [header]
+        last_cat = None
+        for e in items:
+            cat = (e.get("category") or "").strip()
+            if cat and cat != last_cat:
+                lines.append("")
+                lines.append(cat)
+                last_cat = cat
+            lines.append(e.get("raw","").strip())
+        return lines
+
+    out = ["ТЕРМИНЫ", ""] + block("1", h1) + ["", "-", ""] + block("2", h2)
+    return "\n".join(out)[:MAXLEN]
+
+def upsert_mirror(state: dict, markers: dict):
+    if not (MIRROR_CHAT_ID and MIRROR_THREAD_ID and MIRROR_CHAT_ID.lstrip("-").isdigit() and MIRROR_THREAD_ID.isdigit()):
         return
 
-    text = build_all_events_text(state)
-    chat_id = int(SOURCE_CHAT_ID)
-    thread_id = int(SOURCE_THREAD_ID)
+    chat_id = int(MIRROR_CHAT_ID)
+    thread_id = int(MIRROR_THREAD_ID)
+    text = render_terms_text(state, markers)
 
-    mid = state.get("mirror_msg_id", 0)
-    if isinstance(mid, int) and mid > 0:
-        tg("editMessageText", {
+    mid = int(state.get("mirror_mid") or 0)
+    if mid > 0:
+        res, _ = tg("editMessageText", {
             "chat_id": chat_id,
             "message_id": mid,
             "message_thread_id": thread_id,
             "text": text
         })
-    else:
-        msg, _ = tg("sendMessage", {
-            "chat_id": chat_id,
-            "message_thread_id": thread_id,
-            "text": text,
-            "disable_notification": True
-        })
-        if msg and msg.get("message_id"):
-            state["mirror_msg_id"] = int(msg["message_id"])
+        if res:
+            log("MIRROR_EDIT_OK", mid)
+            return
+        # если edit не удался — создадим заново
+
+    msg, _ = tg("sendMessage", {
+        "chat_id": chat_id,
+        "message_thread_id": thread_id,
+        "text": text,
+        "disable_notification": True
+    })
+    if msg:
+        state["mirror_mid"] = msg["message_id"]
+        log("MIRROR_NEW", state["mirror_mid"])
 
 def main():
+    # не сносим очередь апдейтов
     tg("deleteWebhook", {"drop_pending_updates": False})
 
     markers = load_markers()
@@ -327,6 +347,8 @@ def main():
     updates, _ = tg("getUpdates", {"offset": last + 1, "timeout": 0, "limit": 100})
     if updates is None:
         updates = []
+
+    log("UPDATES_COUNT", len(updates))
 
     max_uid = last
     n = now()
@@ -350,10 +372,17 @@ def main():
                 answer_callback(cq["id"], "Нет доступа")
                 continue
             answer_callback(cq["id"], "Ок")
-            send(from_id, build_all_events_text(state) if state else "STATE ещё не настроен.", silent=True)
+            if not state["events"]:
+                send(from_id, "Будущих событий нет.", silent=True)
+            else:
+                # короткий список
+                evs = list(state["events"].values())
+                evs.sort(key=lambda x: x["dt_iso"])
+                txt = "Все будущие события:\n\n" + "\n".join(f"• {e['dt_iso']} — {e['raw']}" for e in evs[:80])
+                send(from_id, txt, silent=True)
             continue
 
-    # messages
+    # messages + edits
     for upd in updates:
         msg = upd.get("message") or upd.get("edited_message")
         if not msg:
@@ -372,12 +401,12 @@ def main():
         if text.startswith("/ids"):
             info = f"chat_id={chat_id}\nthread_id={thread_id}"
             if thread_id:
-                send(chat_id, info, silent=True, thread_id=int(thread_id))
+                tg("sendMessage", {"chat_id": chat_id, "message_thread_id": int(thread_id), "text": info, "disable_notification": True})
             else:
                 send(chat_id, info, silent=True)
             continue
 
-        # личка: меню
+        # private menu
         if chat_type == "private":
             kb = {"inline_keyboard": [
                 [{"text": "Получить свой ID", "callback_data": "GET_MY_ID"}],
@@ -387,13 +416,17 @@ def main():
                 send(chat_id, "Меню:", silent=True, reply_markup=kb)
             continue
 
-        # источник: только нужная тема
+        # SOURCE topic
         if state and SOURCE_CHAT_ID and SOURCE_THREAD_ID:
             if str(chat_id) == str(SOURCE_CHAT_ID) and str(thread_id) == str(SOURCE_THREAD_ID):
                 if text.startswith("/"):
                     continue
+
                 evs = parse_events_from_block(text, markers)
+                log("PARSE_FROM_SOURCE", "msg", mid, "events", len(evs))
+
                 if evs:
+                    # заменить события из этого сообщения
                     old_ids = state["by_msg"].get(str(mid), [])
                     for eid in old_ids:
                         state["events"].pop(eid, None)
@@ -404,22 +437,21 @@ def main():
 
                     set_reaction_ok(str(chat_id), mid)
 
-    # cleanup + mirror + reminders
+    # cleanup past events
     if state:
         state["last_update_id"] = max_uid
 
-        # удалить прошедшее (оставляем только будущее, плюс буфер 1 день)
-        keep = {}
+        cleaned = {}
         for eid, ev in state["events"].items():
             dt = datetime.fromisoformat(ev["dt_iso"]).astimezone(TZ)
-            if dt >= n - timedelta(days=1):
-                keep[eid] = ev
-        state["events"] = keep
+            if dt >= n:
+                cleaned[eid] = ev
+        state["events"] = cleaned
 
-        # обновить зеркальный пост в теме "Термины"
-        upsert_mirror_post(state)
+        # обновить зеркальный пост (это и есть “перепост + чистка”)
+        upsert_mirror(state, markers)
 
-        # уведомления (если заданы оба получателя)
+        # reminders
         cfg = state.get("cfg", DEFAULT_CFG)
         silent = bool(cfg.get("silent_default", True))
 
@@ -427,6 +459,7 @@ def main():
             u1 = int(USER1_CHAT_ID)
             u2 = int(USER2_CHAT_ID)
 
+            # daily digest
             if due_daily_digest(cfg, n):
                 key = f"digest|{n.date().isoformat()}"
                 if not state["sent"].get(key):
@@ -437,23 +470,21 @@ def main():
                         if dt.date() == today:
                             evs_today.append(ev)
                     evs_today.sort(key=lambda x: x["dt_iso"])
-                    txt = ("События на сегодня:\n\n" + "\n".join(format_event(e) for e in evs_today)) if evs_today else "Событий на сегодня нет."
+                    txt = "События на сегодня:\n\n" + "\n".join(f"• {e['raw']}" for e in evs_today) if evs_today else "Событий на сегодня нет."
                     send(u1, txt, silent=silent)
                     send(u2, txt, silent=silent)
                     state["sent"][key] = n.isoformat()
 
+            # event reminders (1 day + day-of)
             for ev in state["events"].values():
                 ev_dt = datetime.fromisoformat(ev["dt_iso"]).astimezone(TZ)
-                for off in cfg.get("offsets_days", [1, 0]):
+                for off in cfg.get("offsets_days", [1,0]):
                     sent_key = f"{ev['id']}|{int(off)}"
                     if state["sent"].get(sent_key):
                         continue
                     if due_for_offset(ev_dt, int(off), cfg, n):
-                        dt_s = ev_dt.strftime("%d.%m.%Y %H:%M") if ev.get("has_time") else ev_dt.strftime("%d.%m.%Y")
-                        label = f"Список {ev['slot']}: "
-                        msg_text = (f"{label}Сегодня: {dt_s} — {ev['title']}"
-                                    if int(off) == 0 else
-                                    f"{label}Через {int(off)} дн.: {dt_s} — {ev['title']}")
+                        label = "Сегодня" if int(off) == 0 else f"Через {int(off)} дн."
+                        msg_text = f"{label}: {ev.get('raw','')}"
                         send(u1, msg_text, silent=silent)
                         send(u2, msg_text, silent=silent)
                         state["sent"][sent_key] = n.isoformat()
