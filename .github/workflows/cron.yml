@@ -19,6 +19,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run python runner.py
+        run: python -u runner.py
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TZ: ${{ secrets.TZ }}
@@ -33,4 +34,49 @@ jobs:
           USER2_CHAT_ID: ${{ secrets.USER2_CHAT_ID }}
 
           PEOPLE_MARKERS_JSON: ${{ secrets.PEOPLE_MARKERS_JSON }}
+
+          MIRROR_CHAT_ID: ${{ secrets.MIRROR_CHAT_ID }}
+          MIRROR_THREAD_ID: ${{ secrets.MIRROR_THREAD_ID }}
+
+          DEBUG: "1"
+name: tg-reminder-bot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run python runner.py
         run: python -u runner.py
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TZ: ${{ secrets.TZ }}
+
+          SOURCE_CHAT_ID: ${{ secrets.SOURCE_CHAT_ID }}
+          SOURCE_THREAD_ID: ${{ secrets.SOURCE_THREAD_ID }}
+
+          STATE_CHAT_ID: ${{ secrets.STATE_CHAT_ID }}
+          STATE_THREAD_ID: ${{ secrets.STATE_THREAD_ID }}
+
+          USER1_CHAT_ID: ${{ secrets.USER1_CHAT_ID }}
+          USER2_CHAT_ID: ${{ secrets.USER2_CHAT_ID }}
+
+          PEOPLE_MARKERS_JSON: ${{ secrets.PEOPLE_MARKERS_JSON }}
+
+          MIRROR_CHAT_ID: ${{ secrets.MIRROR_CHAT_ID }}
+          MIRROR_THREAD_ID: ${{ secrets.MIRROR_THREAD_ID }}
+
+          DEBUG: "1"
